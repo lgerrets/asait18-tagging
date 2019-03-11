@@ -5,9 +5,9 @@ from keras.layers.convolutional import ZeroPadding2D, AveragePooling2D, Convolut
 from keras.layers.normalization import BatchNormalization
 from keras.optimizers import SGD,Adam
 
-from src.parameters import *
+from parameters import *
 
-def build_dense(input_shape):
+def build_dense(input_shape,lr):
 	###build model by keras
 	model = Sequential()
 
@@ -26,7 +26,7 @@ def build_dense(input_shape):
 	model.add(Dense(n_classes))
 	model.add(Activation('sigmoid'))
 
-	sgd = SGD(lr=0.005, decay=0, momentum=0.9)
+	sgd = SGD(lr=lr, decay=0, momentum=0.9)
 	model.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
 
 	return model
