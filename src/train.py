@@ -13,6 +13,8 @@ parser.add_argument('--lr', type=float, default=0.005, metavar='LR',
                     help='learning rate (default: 0.005)')
 parser.add_argument('--data', type=str, default="data", metavar='DA',
                     help='path to the data folder (where the files %s and %s are located) (default: data)'%(file_feat,file_y))
+parser.add_argument('--model', type=str, default="models", metavar='MD',
+                    help='path where the model checkpoints should be saved to')
 
 
 def main(args):
@@ -22,7 +24,7 @@ def main(args):
 	model = models.build_dense(input_shape=(92*40,),lr=args.lr)
 	model.summary()
 
-	dump_file = 'models/' + time.strftime("%Y%m%d%H%M",time.localtime()) + '_keras_weights.{epoch:02d}-{val_loss:.2f}.ckpt'
+	dump_file = os.path.join(args.model, time.strftime("%Y%m%d%H%M",time.localtime()) + '_keras_weights.{epoch:02d}-{val_loss:.2f}.ckpt')
 	eachmodel=ModelCheckpoint(dump_file,monitor='val_loss',verbose=0,save_best_only=False,save_weights_only=False,mode='auto')
 
 	model.fit_generator(generator=data_train,validation_data=data_val,nb_epoch=3,verbose=1,

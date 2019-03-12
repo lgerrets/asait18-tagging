@@ -1,12 +1,12 @@
 import numpy as np
 import os
 import scipy
-import keras 
+from keras.utils import Sequence
 import librosa 
 from parameters import *
 
 import argparse
-parser = argparse.ArgumentParser(description='Train Mel feature + Deep model for audio tagging')
+parser = argparse.ArgumentParser(description='Preprocess the data into mel features and binary targets.')
 parser.add_argument('--data', type=str, default="data", metavar='DA',
                     help='path to the data folder (where the *.csv and *.wav files are located) (default: data)')
 parser.add_argument('--fs', type=int, default=16000, metavar='FS',
@@ -52,7 +52,7 @@ def create_mfb_features(data_path,fs,frame_ms,hop_ms):
 		if not os.path.isfile(file):
 			continue
 
-		if not file[-10:] == ".16kHz.wav":
+		if not file[-7:] == "kHz.wav":
 			continue
 
 		num_chunks += 1
@@ -70,20 +70,8 @@ def create_mfb_features(data_path,fs,frame_ms,hop_ms):
 		# convert into a binary vector
 		targets = np.zeros(n_classes)
 		for c in y_data:
-			if c == 'b': # broadband noise
-				targets[0] = 1
-			elif c == 'c': # child speech
-				targets[1] = 1
-			elif c == 'f': # adult female speech
-				targets[2] = 1
-			elif c == 'm': # adult male speech
-				targets[3] = 1
-			elif c == 'o': # other identifiable sounds
-				targets[4] = 1
-			elif c == 'p': # percussive sounds eg crash bang knock footsteps
-				targets[5] = 1
-			elif c == 'v': # video game / TV
-				targets[6] = 1
+			if c in ind_to_tag:
+				targets[tag_to_ind[c]] = 1 
 			else:
 				# print("Unexpected value "+str(c)+" in "+str(y_data))
 				chunk_is_valid = False
@@ -133,97 +121,106 @@ def create_mfb_features(data_path,fs,frame_ms,hop_ms):
 
 
 
-class DataLoader(keras.utils.Sequence):
-    """Generates data for Keras. This serves as a fast data loader with optimized memory usage (instead of storing every possible set of `num_expansion_frames` contextual frames)."""
-    def __init__(self, data_path, partition='all', batch_size=32, shuffle=True):
-        """Initialization. Create an indexation of all possible samples, eg all possible sets of contextual frames."""
-        self.y_dim = (n_classes,)
-        self.batch_size = batch_size
-        # self.labels = labels
-        self.n_channels = 1
-        self.n_classes = n_classes
-        self.shuffle = shuffle
-        self.partition = partition
+class DataLoader(Sequence):
+	"""Generates data for Keras. This serves as a fast data loader with optimized memory usage (instead of storing every possible set of `num_expansion_frames` contextual frames).
+	"""
+	def __init__(self, data_path, partition='all', batch_size=32, shuffle=True):
+		"""Initialization. Create an indexation of all possible samples, eg all possible sets of contextual frames."""
+		self.y_dim = (n_classes,)
+		self.batch_size = batch_size
+		# self.labels = labels
+		self.n_channels = 1
+		self.n_classes = n_classes
+		self.shuffle = shuffle
+		self.partition = partition
 
-        # load data and infer sizes
-        self.__load_data(data_path)
-        num_mel_feat = self.mfb_frames.shape[2]
-        self.x_dim = ((num_expansion_frames+1)*num_mel_feat,) # eg 92*40
-        num_frames = self.mfb_frames.shape[1]
+		# load data and infer sizes
+		self.__load_data(data_path)
+		num_mel_feat = self.mfb_frames.shape[2]
+		self.x_dim = ((num_expansion_frames+1)*num_mel_feat,) # eg 92*40
+		num_frames = self.mfb_frames.shape[1]
+		num_chunks = self.targets.shape[0]
 
-        # create an exhaustive list of indexes for all possible samples
-        self.chunks = np.arange(self.targets.shape[0])
-        self.middle_frames = np.arange(int(num_expansion_frames/2), num_frames-int(num_expansion_frames/2)) # eg if num_expansion_frames=91 and num_frames=399, this is an int array [40, ... 358]
-        grid_chunks,grid_middle_frames = np.meshgrid(self.chunks,self.middle_frames)
-        self.list_IDs = np.stack([grid_chunks,grid_middle_frames],axis=2).reshape(-1,2) # exhaustive list of all [chunk_id,middle_frame_id]
-        self.num_samples = self.list_IDs.shape[0]
+		# create an exhaustive list of indexes for all possible samples
+		self.chunks = np.arange(num_chunks)
+		self.middle_frames = np.arange(int(num_expansion_frames/2), num_frames-int(num_expansion_frames/2)) # eg if num_expansion_frames=91 and num_frames=399, this is an int array [40, ... 358]
+		grid_chunks,grid_middle_frames = np.meshgrid(self.chunks,self.middle_frames)
+		self.list_IDs = np.transpose(np.stack([grid_chunks,grid_middle_frames],axis=2),[1,0,2]).reshape(-1,2) # exhaustive list of all [chunk_id,middle_frame_id], in lexicographic order such that same chunks are grouped
+		self.num_samples = self.list_IDs.shape[0]
 
-        self.on_epoch_end()
+		# partition = 'evaluation' is a special case: a batch has a fixed length and is made of all samples from one chunk, also shuffle is False.
+		if partition == 'evaluation':
+			self.shuffle = False
+			self.batch_size = num_chunks
 
-    def __load_data(self,data_path):
-    	"""Subroutine for `__init__`; loads the data from numpy array .npy files (created by `create_mfb_features`) 
-    	"""
-    	# load data from .npy files
-    	self.mfb_frames = np.load(os.path.join(data_path,file_feat))
-    	self.mfb_averages = self.mfb_frames[:,:first_background_noise_aware,:].mean(axis=1)
-    	self.targets = np.load(os.path.join(data_path,file_y))
+		self.on_epoch_end()
 
-    	num_chunks = self.targets.shape[0]
+	def __load_data(self,data_path):
+		"""Subroutine for `__init__`; loads the data from numpy array .npy files (created by `create_mfb_features`) 
+		"""
+		# load data from .npy files
+		self.mfb_frames = np.load(os.path.join(data_path,file_feat))
+		self.mfb_averages = self.mfb_frames[:,:first_background_noise_aware,:].mean(axis=1)
+		self.targets = np.load(os.path.join(data_path,file_y))
 
-    	# compute chunk ranges depending on the partition
-    	if self.partition == 'all':
-    		selec_chunks = np.arange(num_chunks)
-    	elif self.partition == 'train':
-    		selec_chunks = np.arange(0,int(num_chunks*train_val))
-    	elif self.partition == 'validation':
-    		selec_chunks = np.arange(int(num_chunks*train_val),num_chunks)
-    	else:
-    		assert False
+		num_chunks = self.targets.shape[0]
 
-    	# keep only a part of the data corresponding to the given chunk range
-    	self.mfb_frames = self.mfb_frames[selec_chunks,:,:]
-    	self.mfb_averages = self.mfb_averages[selec_chunks,:]
-    	self.targets = self.targets[selec_chunks,:]
+		# compute chunk ranges depending on the partition
+		if self.partition == 'all':
+			selec_chunks = np.arange(num_chunks)
+		elif self.partition == 'train':
+			selec_chunks = np.arange(0,int(num_chunks*train_val))
+		elif self.partition == 'validation':
+			selec_chunks = np.arange(int(num_chunks*train_val),num_chunks)
+		elif self.partition == 'evaluation':
+			selec_chunks = np.arange(int(num_chunks*train_val),num_chunks)
+		else:
+			assert False
 
-    def __len__(self):
-        """Denotes the number of batches per epoch. Required by Keras."""
-        return int(np.floor(self.num_samples / self.batch_size))
+		# keep only a part of the data corresponding to the given chunk range
+		self.mfb_frames = self.mfb_frames[selec_chunks,:,:]
+		self.mfb_averages = self.mfb_averages[selec_chunks,:]
+		self.targets = self.targets[selec_chunks,:]
 
-    def __getitem__(self, index):
-        """Generate one batch of data. Required by Keras."""
-        # Generate indexes of the batch
-        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+	def __len__(self):
+		"""Denotes the number of batches per epoch. Required by Keras."""
+		return int(np.floor(self.num_samples / self.batch_size))
 
-        # Find list of IDs
-        list_IDs_temp = [self.list_IDs[k] for k in indexes]
+	def __getitem__(self, index):
+		"""Generate one batch of data. Required by Keras."""
+		# Generate indexes of the batch
+		indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
 
-        # Generate data
-        X = np.empty((self.batch_size, *self.x_dim, self.n_channels))
-        y = np.empty((self.batch_size, *self.y_dim), dtype=int)
-        for i,IDs in enumerate(list_IDs_temp):
-        	[chunk_id,middle_frame_id] = IDs
-        	X[i,:], y[i,:] = self.__data_generation(chunk_id, middle_frame_id)
+		# Find list of IDs
+		list_IDs_temp = [self.list_IDs[k] for k in indexes]
 
-        X = X.reshape(self.batch_size,*self.x_dim)
+		# Generate data
+		X = np.empty((self.batch_size, *self.x_dim, self.n_channels))
+		y = np.empty((self.batch_size, *self.y_dim), dtype=int)
+		for i,IDs in enumerate(list_IDs_temp):
+			[chunk_id,middle_frame_id] = IDs
+			X[i,:], y[i,:] = self.__data_generation(chunk_id, middle_frame_id)
 
-        return X, y
+		X = X.reshape(self.batch_size,*self.x_dim)
 
-    def on_epoch_end(self):
-        """Shuffle indexes after each epoch. Required by Keras."""
-        self.indexes = np.arange(self.num_samples)
-        if self.shuffle == True:
-            np.random.shuffle(self.indexes)
+		return X, y
 
-    def __data_generation(self, chunk_id, middle_frame_id):
-        """Generates one sample"""
-        expanded_frames = self.mfb_frames[chunk_id,middle_frame_id-int(num_expansion_frames/2):middle_frame_id+1+int(num_expansion_frames/2),:]
-        background_noise_aware_frame = self.mfb_averages[chunk_id,:].reshape(1,-1)
-        X = np.concatenate([expanded_frames, background_noise_aware_frame], axis=0)
-        X = X.reshape(self.x_dim[0],1)
-        
-        y = self.targets[chunk_id,:]
-        
-        return X,y
+	def on_epoch_end(self):
+		"""Shuffle indexes after each epoch. Required by Keras."""
+		self.indexes = np.arange(self.num_samples)
+		if self.shuffle == True:
+			np.random.shuffle(self.indexes)
+
+	def __data_generation(self, chunk_id, middle_frame_id):
+		"""Generates one sample"""
+		expanded_frames = self.mfb_frames[chunk_id,middle_frame_id-int(num_expansion_frames/2):middle_frame_id+1+int(num_expansion_frames/2),:]
+		background_noise_aware_frame = self.mfb_averages[chunk_id,:].reshape(1,-1)
+		X = np.concatenate([expanded_frames, background_noise_aware_frame], axis=0)
+		X = X.reshape(self.x_dim[0],1)
+		
+		y = self.targets[chunk_id,:]
+		
+		return X,y
 
 if __name__ == '__main__':
 	args = parser.parse_args()
