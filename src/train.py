@@ -27,7 +27,8 @@ def main(args):
 	model = models.build_dense(input_shape=((num_expansion_frames+1)*40,),lr=args.lr)
 	model.summary()
 
-	dump_file = os.path.join(args.model, time.strftime("%Y%m%d%H%M",time.localtime()) + '_keras_weights.{epoch:02d}-{val_loss:.2f}.ckpt')
+	# dump_file = os.path.join(args.model, time.strftime("%Y%m%d%H%M",time.localtime()) + '_keras_weights.{epoch:02d}-{val_loss:.2f}.ckpt') # commented out because the val_loss key throws an error when the data are too small
+	dump_file = os.path.join(args.model, time.strftime("%Y%m%d%H%M",time.localtime()) + '_keras_weights.{epoch:02d}.ckpt')
 	eachmodel=ModelCheckpoint(dump_file,monitor='val_loss',verbose=0,save_best_only=False,save_weights_only=False,mode='auto')
 
 	model.fit_generator(generator=data_train,validation_data=data_val,nb_epoch=args.epochs,verbose=1,

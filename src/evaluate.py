@@ -48,7 +48,7 @@ def main(args):
 	for cl in range(n_classes):
 		eers[cl] = compute_eer(os.path.join(args.data, eval_result_filename), ind_to_tag[cl], dict(zip(chunk_refs, list(true_scores[:,cl]))))
 
-	print(eers)
+	print("EER scores per tag:",eers)
 
 
 if __name__ == '__main__':

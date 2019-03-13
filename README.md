@@ -22,7 +22,7 @@ One end-to-end approach is to chain
 - **Mel filter banks** (computed in [src/prepare_data.py](src/prepare_data.py))
 - with **deep neural nets** (keras architecture [src/models.py](src/models.py) and training procedure [src/train.py](src/train.py)).
 
-This approach is one of those studied by the original paper, which should be read through for better understanding of the above pipeline.
+This approach is one of those studied by the original paper, which should be read through to better understand the above pipeline and the codes here.
 
 
 ## Installation
@@ -55,9 +55,14 @@ Then, to train your model:
 python src/train.py
 ```
 
+Finally evaluate it, to get the EER scores (used in the original challenge). Note that lower EER scores are better; also with only a few chunks and without data balancing, EER scores are likely to take `nan` values.
+```
+python src/evaluate.py --model models/your_model.cpkt
+```
+
 ### More data
 
-A small part of the dataset is available in this repo so that experiments can already be run. However that is only 2 chunks when the original dataset actually has 6137. The original dataset can be found [here](http://www.cs.tut.fi/sgn/arg/dcase2016/task-audio-tagging) along with more information about the challenge and the context.
+A small part of the dataset is available in this repo so that experiments can already be run. However that is only 6 chunks when the original dataset actually has 6137. The original dataset can be found [here](http://www.cs.tut.fi/sgn/arg/dcase2016/task-audio-tagging) along with more information about the challenge and the context.
 
 Once you downloaded the dataset, you can choose to either work with 16kHz or 48kHz sample rates (higher is heavier). If you choose 16kHz, unzip the dataset as follow:
 ```
@@ -65,7 +70,7 @@ tar -xf chime_home.tar.gz --wildcards "chime_home/chunks/*.16kHz.wav" (either 16
 tar -xf chime_home.tar.gz --wildcards "chime_home/chunks/*.csv"
 ```
 
-Now, both `src/prepare_data.py` and `src/train.py` take `--data` as a parameter. Just provide the path where the `.wav` and `.csv` files can be found.
+Next, `src/prepare_data.py`, `src/train.py` and `src/evaluate.py` take `--data` as a parameter. Just provide the path where the `.wav` and `.csv` files can be found.
 
 ### Tweaks
 
