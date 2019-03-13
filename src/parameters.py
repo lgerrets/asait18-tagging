@@ -16,11 +16,16 @@ ind_to_tag = list(tag_to_ind.keys())
 
 
 
-# The following parameters could actually become script arguments, for more modular experiments
+### The following parameters could actually become script arguments, for more modular experiments
+
+# to create mel features
 file_feat = "mfbfeat_x.npy" # file name (not path) of the numpy array of mel features
 file_y = "chunk_y.npy" # file name (not path) of the numpy array of binarized tags
+
+# to preprocess the data ; every model must be trained and tested with these params fixed
 num_expansion_frames = 91 # number of frames to surround a single frame for context (a neural net is given such context as an input rather than frames alone)
 first_background_noise_aware = 6 # first frames of a chunk to be used for estimating average ambient noise
+
+# for train.py
 train_val = 0.5 # ratio of the train set (between 0 and 1) 
-
-
+tag_proportions = {'c' :1214, 'm' :174, 'f' :409, 'v' :1181, 'p' :765, 'b' :19, 'o' :361}

@@ -7,12 +7,13 @@ from keras.optimizers import SGD,Adam
 
 from parameters import *
 
+
 def build_dense(input_shape,lr):
 	###build model by keras
 	model = Sequential()
 
 	#model.add(Flatten(input_shape=(agg_num,fea_dim)))
-	model.add(Dropout(0.1,input_shape=input_shape))
+	model.add(Dropout(0.1,input_shape=input_shape)) # passing input_shape as an arg to 1st layer is crucial (see https://github.com/tensorflow/tensorflow/issues/25175)
 	#model.add(Dropout(0.1,input_shape=(agg_num*fea_dim,)))
 
 	model.add(Dense(1000))
@@ -28,5 +29,9 @@ def build_dense(input_shape,lr):
 
 	sgd = SGD(lr=lr, decay=0, momentum=0.9)
 	model.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
+	# model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
 	return model
+
+
+

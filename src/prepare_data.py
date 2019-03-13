@@ -76,6 +76,9 @@ def create_mfb_features(data_path,fs,frame_ms,hop_ms):
 				# print("Unexpected value "+str(c)+" in "+str(y_data))
 				chunk_is_valid = False
 
+		if np.sum(targets) < 1:
+			chunk_is_valid = False
+
 		if not chunk_is_valid:
 			continue # tags are not valid so we skip this chunk
 		else:
@@ -124,8 +127,18 @@ def create_mfb_features(data_path,fs,frame_ms,hop_ms):
 class DataLoader(Sequence):
 	"""Generates data for Keras. This serves as a fast data loader with optimized memory usage (instead of storing every possible set of `num_expansion_frames` contextual frames).
 	"""
-	def __init__(self, data_path, partition='all', batch_size=32, shuffle=True):
-		"""Initialization. Create an indexation of all possible samples, eg all possible sets of contextual frames."""
+	def __init__(self, data_path, partition='all',balance=False, batch_size=32, shuffle=True, samples_per_chunk=5):
+		"""Initialization. Create an indexation of all possible samples, eg all possible sets of contextual frames.
+		Inputs:
+			data_path (str): path where the .npy mel features and target vectors can be found
+			partition (str): one of 'all', 'train', 'validation', 'evaluation'
+			balance (bool): wether to balance the data or not by taking more samples from chunks that have rarer tags (only intended for training, otherwise no balancing is done)
+			batch_size (int): number of samples per batch (only intended for training, otherwise `batch_size` is fixed to be `samples_per_chunk`)
+			shuffle (bool): wether to shuffle the data loader
+			samples_per_chunk (int): number of samples to be extracted from each chunk; if `balance` is True, this is actually instead the **minimum** number of samples per chunks
+		"""
+		assert not (balance and partition=='evaluation'), "Cannot balance AND evaluate"
+
 		self.y_dim = (n_classes,)
 		self.batch_size = batch_size
 		# self.labels = labels
@@ -141,17 +154,33 @@ class DataLoader(Sequence):
 		num_frames = self.mfb_frames.shape[1]
 		num_chunks = self.targets.shape[0]
 
-		# create an exhaustive list of indexes for all possible samples
-		self.chunks = np.arange(num_chunks)
-		self.middle_frames = np.arange(int(num_expansion_frames/2), num_frames-int(num_expansion_frames/2)) # eg if num_expansion_frames=91 and num_frames=399, this is an int array [40, ... 358]
-		grid_chunks,grid_middle_frames = np.meshgrid(self.chunks,self.middle_frames)
-		self.list_IDs = np.transpose(np.stack([grid_chunks,grid_middle_frames],axis=2),[1,0,2]).reshape(-1,2) # exhaustive list of all [chunk_id,middle_frame_id], in lexicographic order such that same chunks are grouped
+		# preprocess the data (scaling)
+		self.__preprocess()
+
+		if not balance:
+			# create an exhaustive list of indexes for all possible samples
+			chunks = np.arange(num_chunks)
+			middle_frames = np.linspace(int(num_expansion_frames/2), num_frames-int(num_expansion_frames/2)-1, samples_per_chunk).astype(int) # eg if num_expansion_frames=91 and num_frames=399, this is an int array [40, ... 358]
+			grid_chunks,grid_middle_frames = np.meshgrid(chunks,middle_frames)
+			self.list_IDs = np.transpose(np.stack([grid_chunks,grid_middle_frames],axis=2),[1,0,2]).reshape(-1,2) # exhaustive list of all [chunk_id,middle_frame_id], in lexicographic order such that same chunks are grouped
+		else:
+			chunks = np.arange(num_chunks)
+			self.list_IDs = []
+			max_tag_proportion = np.max(list(tag_proportions.values()))
+			for chunk in chunks:
+				tags = [ind_to_tag[cl] for cl in range(n_classes) if self.targets[chunk,cl]]
+				proportions = [tag_proportions[tag] for tag in tags]
+				chunk_balancing = max_tag_proportion/np.mean(proportions) # this is one simple way to have more samples for chunks that have rare tags
+				chunk_balancing = int(np.round(chunk_balancing*samples_per_chunk)) # ensures that every chunk is sampled at least `samples_per_chunk` times
+				self.list_IDs += list(np.stack([[chunk]*chunk_balancing, np.linspace(int(num_expansion_frames/2),num_frames-int(num_expansion_frames/2)-1,chunk_balancing).astype(int)],axis=1)) # idea: could be randomint indexes instead of linspace
+			self.list_IDs = np.array(self.list_IDs)
 		self.num_samples = self.list_IDs.shape[0]
+
 
 		# partition = 'evaluation' is a special case: a batch has a fixed length and is made of all samples from one chunk, also shuffle is False.
 		if partition == 'evaluation':
 			self.shuffle = False
-			self.batch_size = num_chunks
+			self.batch_size = samples_per_chunk
 
 		self.on_epoch_end()
 
@@ -182,6 +211,15 @@ class DataLoader(Sequence):
 		self.mfb_averages = self.mfb_averages[selec_chunks,:]
 		self.targets = self.targets[selec_chunks,:]
 
+	def __preprocess(self):
+		"""Performs feature scaling and zero mean"""
+		self.mfb_frames -= self.mfb_frames.mean(axis=0)
+		self.mfb_averages -= self.mfb_averages.mean(axis=0)
+
+		self.mfb_frames /= self.mfb_frames.std(axis=0)
+		self.mfb_averages /= self.mfb_averages.std(axis=0)
+
+
 	def __len__(self):
 		"""Denotes the number of batches per epoch. Required by Keras."""
 		return int(np.floor(self.num_samples / self.batch_size))
@@ -199,7 +237,7 @@ class DataLoader(Sequence):
 		y = np.empty((self.batch_size, *self.y_dim), dtype=int)
 		for i,IDs in enumerate(list_IDs_temp):
 			[chunk_id,middle_frame_id] = IDs
-			X[i,:], y[i,:] = self.__data_generation(chunk_id, middle_frame_id)
+			X[i,:], y[i,:] = self.data_generation(chunk_id, middle_frame_id)
 
 		X = X.reshape(self.batch_size,*self.x_dim)
 
@@ -211,7 +249,7 @@ class DataLoader(Sequence):
 		if self.shuffle == True:
 			np.random.shuffle(self.indexes)
 
-	def __data_generation(self, chunk_id, middle_frame_id):
+	def data_generation(self, chunk_id, middle_frame_id):
 		"""Generates one sample"""
 		expanded_frames = self.mfb_frames[chunk_id,middle_frame_id-int(num_expansion_frames/2):middle_frame_id+1+int(num_expansion_frames/2),:]
 		background_noise_aware_frame = self.mfb_averages[chunk_id,:].reshape(1,-1)
